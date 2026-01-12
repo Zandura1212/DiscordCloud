@@ -1,0 +1,20 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="18.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="D:\Programing\discordcloud\build\windows\x64\CMakeFiles\a6857a805a3c998c2a1b866bd4c53e1a\flutter_windows.dll.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\Programing\discordcloud\build\windows\x64\CMakeFiles\880692b1bff6df0a038eac8d179c7b29\flutter_assemble.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\Programing\discordcloud\windows\flutter\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="D:\Programing\discordcloud\build\windows\x64\flutter\CMakeFiles\flutter_assemble" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{19D10B24-34A3-37DA-BD7A-457FA0C1B1E8}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
