@@ -21,17 +21,17 @@ class DiscordService {
   String _encryptFileName(String fileName, String token) {
     final keyBytes = sha256.convert(utf8.encode(token)).bytes;
     final key = encrypt_pkg.Key(Uint8List.fromList(keyBytes));
-    final iv = encrypt_pkg.IV(Uint8List(16)); // 고정 IV (전부 0)
+    final iv = encrypt_pkg.IV(Uint8List(16)); 
     final encrypter = encrypt_pkg.Encrypter(encrypt_pkg.AES(key, mode: encrypt_pkg.AESMode.cbc));
     return encrypter.encrypt(fileName, iv: iv).base64;
   }
 
-  // 파일명 복호화 유틸리티 (일관성을 위해 고정 IV 사용)
+  // 파일명 복호화 유틸리티
   String _decryptFileName(String encryptedBase64, String token) {
     try {
       final keyBytes = sha256.convert(utf8.encode(token)).bytes;
       final key = encrypt_pkg.Key(Uint8List.fromList(keyBytes));
-      final iv = encrypt_pkg.IV(Uint8List(16)); // 고정 IV
+      final iv = encrypt_pkg.IV(Uint8List(16)); 
       final encrypter = encrypt_pkg.Encrypter(encrypt_pkg.AES(key, mode: encrypt_pkg.AESMode.cbc));
       return encrypter.decrypt64(encryptedBase64, iv: iv);
     } catch (e) {
@@ -76,13 +76,11 @@ class DiscordService {
           
           if (lastUnderscore == -1) continue;
 
-          // 구분자(_) 앞부분만 정확히 추출
           final encPart = content.substring(0, lastUnderscore);
           final countPart = content.substring(lastUnderscore + 1);
           
           if (int.tryParse(countPart) == null) continue;
 
-          // 앞부분 해독
           final displayName = _decryptFileName(encPart, token);
           
           if (displayName != "Decryption Error") {
@@ -109,11 +107,83 @@ class DiscordService {
         await listFile.writeAsString(jsonEncode(fetchedList));
         onLog("동기화 완료: 총 ${fetchedList.length}개의 파일을 찾았습니다.");
       }
-
-      await logout();
     } catch (e) {
       onLog("리스트 불러오기 실패: $e");
       rethrow;
+    } finally {
+      // 작업 완료 후 무조건 봇 종료
+      onLog("동기화 작업이 종료되어 봇을 로그아웃합니다.");
+      await logout();
+    }
+  }
+
+  // 디스코드에서 파일 조각들을 다운로드하는 함수
+  Future<void> downloadChunks({
+    required String storageChannelId,
+    required String encryptedName,
+    required int totalChunks,
+    required String downloadPath,
+    required String token, // 봇 로그인용 토큰 추가
+    required Function(String log) onLog,
+    required Function(double progress) onProgress,
+  }) async {
+    await login(token);
+    
+    try {
+      final channel = await _client!.channels.get(Snowflake.parse(storageChannelId)) as TextChannel;
+      final Map<int, String> chunkUrls = {};
+      
+      onLog("파일 조각 위치 찾는 중...");
+      Snowflake? lastMessageId;
+      bool hasMore = true;
+
+      while (hasMore && chunkUrls.length < totalChunks) {
+        final List<Message> messages = await channel.messages.fetchMany(before: lastMessageId, limit: 100);
+        if (messages.isEmpty) break;
+
+        for (final message in messages) {
+          if (message.content.startsWith("${encryptedName}_")) {
+            for (var attachment in message.attachments) {
+              final fileName = attachment.fileName;
+              final idx = int.tryParse(fileName.split('.').first);
+              if (idx != null) {
+                chunkUrls[idx] = attachment.url.toString();
+              }
+            }
+          }
+        }
+        lastMessageId = messages.last.id;
+        if (messages.length < 100) hasMore = false;
+      }
+
+      if (chunkUrls.length < totalChunks) {
+        throw Exception("일부 조각을 찾을 수 없습니다. (발견: ${chunkUrls.length}/$totalChunks)");
+      }
+
+      final dir = Directory(downloadPath);
+      if (!await dir.exists()) await dir.create(recursive: true);
+
+      final httpClient = HttpClient();
+      for (int i = 0; i < totalChunks; i++) {
+        final url = chunkUrls[i]!;
+        final request = await httpClient.getUrl(Uri.parse(url));
+        final response = await request.close();
+        final bytes = await response.fold<List<int>>([], (p, e) => p..addAll(e));
+        
+        final file = File('$downloadPath\\$i.txt');
+        await file.writeAsBytes(bytes);
+        
+        onProgress((i + 1) / totalChunks);
+        if (i % 5 == 0) onLog("다운로드 중: $i / $totalChunks 조각 완료");
+      }
+      httpClient.close();
+    } catch (e) {
+      onLog("다운로드 중 오류: $e");
+      rethrow;
+    } finally {
+      // 작업 완료 후 무조건 봇 종료
+      onLog("다운로드 작업이 종료되어 봇을 로그아웃합니다.");
+      await logout();
     }
   }
 
@@ -128,7 +198,7 @@ class DiscordService {
     required Function(String log) onLog,
     required Function(double progress) onProgress,
   }) async {
-    if (_client == null) throw Exception("봇이 로그인되어 있지 않습니다.");
+    await login(token);
 
     try {
       final directory = Directory(folderPath);
@@ -208,12 +278,13 @@ class DiscordService {
         }
       } catch (e) {}
       
-      onLog("모든 전송이 완료되어 봇을 종료합니다.");
-      await logout();
-      
     } catch (e) {
       onLog("업로드 중 오류 발생: $e");
       rethrow;
+    } finally {
+      // 작업 완료 후 무조건 봇 종료
+      onLog("업로드 작업이 종료되어 봇을 로그아웃합니다.");
+      await logout();
     }
   }
 
