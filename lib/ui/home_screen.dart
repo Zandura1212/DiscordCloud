@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:window_manager/window_manager.dart';
 import '../services/file_service.dart';
@@ -10,51 +9,26 @@ import '../services/discord_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
-
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> with WindowListener {
   final PageController _pageController = PageController();
-  
-  final TextEditingController _tokenController = TextEditingController();
-  final TextEditingController _storageChannelController = TextEditingController();
-  final TextEditingController _listChannelController = TextEditingController();
-  
-  final TextEditingController _dlTokenController = TextEditingController();
-  final TextEditingController _dlStorageChannelController = TextEditingController();
-  final TextEditingController _dlListChannelController = TextEditingController();
-  
-  final FocusNode _tokenFocus = FocusNode();
-  final FocusNode _storageFocus = FocusNode();
-  final FocusNode _listFocus = FocusNode();
-  final FocusNode _dlTokenFocus = FocusNode();
-  final FocusNode _dlStorageFocus = FocusNode();
-  final FocusNode _dlListFocus = FocusNode();
-  
-  final ScrollController _logScrollController = ScrollController();
-  final ScrollController _dlLogScrollController = ScrollController();
-  final DiscordService _discordService = DiscordService();
-  
-  final List<String> _logs = [];
-  final List<String> _dlLogs = [];
+  final TextEditingController _t1 = TextEditingController(), _s1 = TextEditingController(), _l1 = TextEditingController();
+  final TextEditingController _t2 = TextEditingController(), _s2 = TextEditingController(), _l2 = TextEditingController();
+  final FocusNode _f1 = FocusNode(), _fs1 = FocusNode(), _fl1 = FocusNode();
+  final FocusNode _f2 = FocusNode(), _fs2 = FocusNode(), _fl2 = FocusNode();
+  final ScrollController _sc1 = ScrollController(), _sc2 = ScrollController();
+  final DiscordService _ds = DiscordService();
+  final List<String> _logs = [], _dlLogs = [];
   List<Map<String, dynamic>> _fileList = [];
-  Map<String, dynamic>? _selectedFile;
-  
+  String? _selId; // 선택된 파일의 encrypted_name을 저장 (인스턴스 에러 방지)
   String? _selectedFilePath;
-  int _currentPage = 0;
-  
-  bool _isObscured = true;
-  bool _isDlObscured = true;
-  
-  double _uploadProgress = 0.0;
-  bool _isUploading = false;
-  String _remainingTime = "";
-
-  double _downloadProgress = 0.0;
-  bool _isDownloading = false;
-  String _dlRemainingTime = "";
+  int _curr = 0;
+  bool _obs1 = true, _obs2 = true, _isUp = false, _isDown = false;
+  double _prog1 = 0.0, _prog2 = 0.0;
+  String _etr1 = "", _etr2 = "";
 
   @override
   void initState() {
@@ -62,625 +36,148 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
     windowManager.addListener(this);
     _initData();
     _loadFileList();
-    _addLog("애플리케이션이 시작되었습니다.");
-    
-    _tokenController.addListener(_updateState);
-    _storageChannelController.addListener(_updateState);
-    _listChannelController.addListener(_updateState);
-    _dlTokenController.addListener(_updateState);
-    _dlStorageChannelController.addListener(_updateState);
-    _dlListChannelController.addListener(_updateState);
-  }
-
-  void _updateState() {
-    if (mounted) setState(() {});
+    void update() => setState(() {});
+    [_t1, _s1, _l1, _t2, _s2, _l2].forEach((c) => c.addListener(update));
   }
 
   @override
   void dispose() {
     windowManager.removeListener(this);
-    _tokenFocus.dispose();
-    _storageFocus.dispose();
-    _listFocus.dispose();
-    _dlTokenFocus.dispose();
-    _dlStorageFocus.dispose();
-    _dlListFocus.dispose();
-    _tokenController.dispose();
-    _storageChannelController.dispose();
-    _listChannelController.dispose();
-    _dlTokenController.dispose();
-    _dlStorageChannelController.dispose();
-    _dlListChannelController.dispose();
-    _pageController.dispose();
-    _logScrollController.dispose();
-    _dlLogScrollController.dispose();
-    _discordService.logout();
+    [_f1, _fs1, _fl1, _f2, _fs2, _fl2, _t1, _s1, _l1, _t2, _s2, _l2, _pageController, _sc1, _sc2].forEach((o) => o.dispose());
+    _ds.logout();
     super.dispose();
   }
 
-  Future<void> _cleanUpFolders() async {
-    try {
-      String? appData = Platform.environment['APPDATA'];
-      if (appData != null) {
-        final customDirPath = '$appData\\DiscordCloud';
-        final directory = Directory(customDirPath);
-        if (await directory.exists()) {
-          final List<FileSystemEntity> entities = await directory.list().toList();
-          for (var entity in entities) {
-            if (entity is Directory) {
-              await entity.delete(recursive: true);
-            } else if (entity is File && !entity.path.endsWith('list.json')) {
-              await entity.delete();
-            }
-          }
-        }
-      }
-    } catch (e) {
-      debugPrint("폴더 정리 중 에러: $e");
-    }
-  }
-
-  @override
-  void onWindowClose() async {
-    await _cleanUpFolders();
-    await windowManager.destroy();
-  }
-
   Future<void> _initData() async {
-    final data = await TokenService.loadAllData();
-    if (mounted) {
-      setState(() {
-        _tokenController.text = data['token']!;
-        _storageChannelController.text = data['storage_channel']!;
-        _listChannelController.text = data['list_channel']!;
-        _dlTokenController.text = data['dl_token']!;
-        _dlStorageChannelController.text = data['dl_storage_channel']!;
-        _dlListChannelController.text = data['dl_list_channel']!;
-      });
-    }
+    final d = await TokenService.loadAllData();
+    _t1.text = d['token']!; _s1.text = d['storage_channel']!; _l1.text = d['list_channel']!;
+    _t2.text = d['dl_token']!; _s2.text = d['dl_storage_channel']!; _l2.text = d['dl_list_channel']!;
+  }
+
+  void _addLog(bool isUp, String msg) {
+    final list = isUp ? _logs : _dlLogs;
+    final time = DateTime.now().toString().split('.').first.split(' ').last;
+    if (mounted) setState(() { list.add("[$time] $msg"); if (list.length > 500) list.removeAt(0); });
+    final sc = isUp ? _sc1 : _sc2;
+    WidgetsBinding.instance.addPostFrameCallback((_) { if (sc.hasClients) sc.jumpTo(sc.position.maxScrollExtent); });
   }
 
   Future<void> _loadFileList() async {
-    try {
-      final String? appData = Platform.environment['APPDATA'];
-      if (appData != null) {
-        final listFile = File('$appData\\DiscordCloud\\list.json');
-        if (await listFile.exists()) {
-          final String content = await listFile.readAsString();
-          if (content.isNotEmpty) {
-            final decoded = jsonDecode(content);
-            if (decoded is List) {
-              setState(() {
-                final List<Map<String, dynamic>> rawList = List<Map<String, dynamic>>.from(decoded);
-                final Map<String, Map<String, dynamic>> uniqueMap = {};
-                for (var item in rawList) {
-                  uniqueMap[item['encrypted_name']] = item;
-                }
-                _fileList = uniqueMap.values.toList();
-                
-                if (_selectedFile != null) {
-                  bool exists = _fileList.any((f) => f['encrypted_name'] == _selectedFile!['encrypted_name']);
-                  if (!exists) {
-                    _selectedFile = null;
-                  } else {
-                    _selectedFile = _fileList.firstWhere((f) => f['encrypted_name'] == _selectedFile!['encrypted_name']);
-                  }
-                }
-              });
-            }
-          }
-        }
-      }
-    } catch (e) {
-      _addDlLog("리스트 로드 오류: $e");
-    }
-  }
-
-  void _addLog(String message) {
-    final time = DateTime.now().toString().split('.').first.split(' ').last;
-    if (mounted) {
-      setState(() {
-        _logs.add("[$time] $message");
-        if (_logs.length > 500) _logs.removeAt(0);
+    final path = Platform.environment['APPDATA'];
+    if (path == null) return;
+    final file = File('$path\\DiscordCloud\\list.json');
+    if (await file.exists()) {
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is List) setState(() {
+        final Map<String, Map<String, dynamic>> unique = {};
+        for (var item in decoded) unique[item['encrypted_name']] = Map<String, dynamic>.from(item);
+        _fileList = unique.values.toList();
+        // 선택된 ID가 리스트에 없으면 초기화
+        if (_selId != null && !_fileList.any((f) => f['encrypted_name'] == _selId)) _selId = null;
       });
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_logScrollController.hasClients) {
-        _logScrollController.jumpTo(_logScrollController.position.maxScrollExtent);
+  }
+
+  Future<void> _clean() async {
+    final path = Platform.environment['APPDATA'];
+    if (path == null) return;
+    final dir = Directory('$path\\DiscordCloud');
+    if (await dir.exists()) {
+      await for (final e in dir.list()) {
+        if (e is Directory) await e.delete(recursive: true);
+        else if (e is File && !e.path.endsWith('list.json')) await e.delete();
       }
-    });
-  }
-
-  void _addDlLog(String message) {
-    final time = DateTime.now().toString().split('.').first.split(' ').last;
-    if (mounted) {
-      setState(() {
-        _dlLogs.add("[$time] $message");
-        if (_dlLogs.length > 500) _dlLogs.removeAt(0);
-      });
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_dlLogScrollController.hasClients) {
-        _dlLogScrollController.jumpTo(_dlLogScrollController.position.maxScrollExtent);
-      }
-    });
   }
 
-  Future<void> _handleSaveUploadConfig() async {
-    await TokenService.saveAllData(
-      token: _tokenController.text,
-      storageChannel: _storageChannelController.text,
-      listChannel: _listChannelController.text,
-    );
-    _addLog("업로드 설정이 저장되었습니다.");
-  }
+  @override void onWindowClose() async { await _clean(); await windowManager.destroy(); }
 
-  Future<void> _handleSaveDownloadConfig() async {
-    await TokenService.saveDownloadData(
-      token: _dlTokenController.text,
-      storageChannel: _dlStorageChannelController.text,
-      listChannel: _dlListChannelController.text,
-    );
-    _addDlLog("다운로드 설정이 저장되었습니다.");
-  }
-
-  Future<void> _handleLoadDiscordList() async {
-    if (_isDownloading) return;
-    setState(() => _isDownloading = true);
-    _addDlLog("디스코드에서 파일 리스트를 불러오는 중...");
+  Future<void> _up() async {
+    if (_selectedFilePath == null || _isUp) return;
+    setState(() { _isUp = true; _prog1 = 0.0; _etr1 = "준비 중..."; });
     try {
-      await _discordService.fetchFileList(
-        listChannelId: _dlListChannelController.text,
-        token: _dlTokenController.text,
-        onLog: _addDlLog,
-      );
-      await _loadFileList(); 
-      _addDlLog("리스트 동기화 완료.");
-    } catch (e) {
-      _addDlLog("리스트 불러오기 에러: $e");
-    } finally {
-      if (mounted) setState(() => _isDownloading = false);
-    }
+      final path = Platform.environment['APPDATA']!;
+      final originalName = _selectedFilePath!.split(Platform.pathSeparator).last;
+      final folder = '$path\\DiscordCloud\\${originalName.replaceAll('.', '_')}';
+      final time = DateTime.now().toIso8601String();
+      await FileService.encryptAndSplitFile(sourceFilePath: _selectedFilePath!, destinationFolderPath: folder, token: _t1.text, onLog: (m) => _addLog(true, m), onProgress: (p, e) => setState(() { _prog1 = p * 0.3; _etr1 = e; }));
+      await _ds.uploadChunks(storageChannelId: _s1.text, listChannelId: _l1.text, folderPath: folder, originalFileName: originalName, token: _t1.text, uploadTime: time, onLog: (m) => _addLog(true, m), onProgress: (p) => setState(() { _prog1 = 0.3 + (p * 0.7); _etr1 = "업로드 중"; }));
+      await _clean(); await _loadFileList(); _addLog(true, "완료되었습니다.");
+    } catch (e) { _addLog(true, "에러: $e"); } finally { setState(() => _isUp = false); }
   }
 
-  Future<void> _handlePickFile() async {
+  Future<void> _down() async {
+    if (_selId == null || _isDown) return;
+    final fileData = _fileList.firstWhere((f) => f['encrypted_name'] == _selId);
+    String? out = await FilePicker.platform.saveFile(dialogTitle: '저장 위치 선택', fileName: fileData['display_name']);
+    if (out == null) return;
+    setState(() { _isDown = true; _prog2 = 0.0; _etr2 = "준비 중..."; });
     try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles();
-      if (result != null && mounted) {
-        setState(() {
-          _selectedFilePath = result.files.single.path;
-          _uploadProgress = 0.0;
-        });
-        _addLog("파일 선택됨: ${_selectedFilePath?.split(Platform.pathSeparator).last}");
-      }
-    } catch (e) {
-      _addLog("파일 선택 에러: $e");
-    }
-  }
-
-  Future<void> _handleUpload() async {
-    if (_selectedFilePath == null || _isUploading) return;
-    setState(() {
-      _isUploading = true;
-      _uploadProgress = 0.0;
-      _remainingTime = "준비 중...";
-    });
-
-    try {
-      String? appData = Platform.environment['APPDATA'];
-      if (appData == null) throw Exception("APPDATA 경로를 찾을 수 없습니다.");
-      final customDirPath = '$appData\\DiscordCloud';
-      final originalFileName = _selectedFilePath!.split(Platform.pathSeparator).last;
-      final fileFolder = originalFileName.replaceAll('.', '_');
-      final destinationFolderPath = '$customDirPath\\$fileFolder';
-      final uploadTime = DateTime.now().toIso8601String();
-
-      _addLog("로컬 파일 분할 및 암호화 시작...");
-      await FileService.encryptAndSplitFile(
-        sourceFilePath: _selectedFilePath!,
-        destinationFolderPath: destinationFolderPath,
-        token: _tokenController.text,
-        onProgress: (progress, remaining) {
-          if (mounted) setState(() {
-            _uploadProgress = progress * 0.3;
-            _remainingTime = "로컬 처리 중 ($remaining)";
-          });
-        },
-        onLog: _addLog,
-      );
-
-      _addLog("디스코드 봇 로그인 중...");
-      await _discordService.login(_tokenController.text);
-      
-      _addLog("디스코드 채널로 업로드 및 list.json 작성...");
-      await _discordService.uploadChunks(
-        storageChannelId: _storageChannelController.text,
-        listChannelId: _listChannelController.text,
-        folderPath: destinationFolderPath,
-        originalFileName: originalFileName,
-        token: _tokenController.text,
-        uploadTime: uploadTime,
-        onLog: _addLog,
-        onProgress: (progress) {
-          if (mounted) setState(() {
-            _uploadProgress = 0.3 + (progress * 0.7);
-            _remainingTime = "디스코드 업로드 중...";
-          });
-        },
-      );
-      
-      await _cleanUpFolders();
-      await _loadFileList();
-      _addLog("모든 과정이 완료되었습니다.");
-    } catch (e) {
-      _addLog("에러 발생: $e");
-    } finally {
-      if (mounted) setState(() => _isUploading = false);
-    }
-  }
-
-  Future<void> _handleDownload() async {
-    if (_selectedFile == null || _isDownloading) return;
-    
-    String? outputFilePath = await FilePicker.platform.saveFile(
-      dialogTitle: '파일 저장 위치를 선택하세요',
-      fileName: _selectedFile!['display_name'] ?? 'restored_file',
-    );
-
-    if (outputFilePath == null) return;
-
-    setState(() {
-      _isDownloading = true;
-      _downloadProgress = 0.0;
-      _dlRemainingTime = "준비 중...";
-    });
-
-    try {
-      String? appData = Platform.environment['APPDATA'];
-      final String tempDownloadDir = '$appData\\DiscordCloud\\temp_dl';
-      
-      _addDlLog("다운로드 시작: ${_selectedFile!['display_name']}");
-      
-      await _discordService.login(_dlTokenController.text);
-      await _discordService.downloadChunks(
-        storageChannelId: _dlStorageChannelController.text,
-        encryptedName: _selectedFile!['encrypted_name'],
-        totalChunks: int.parse(_selectedFile!['count'].toString()),
-        downloadPath: tempDownloadDir,
-        token: _dlTokenController.text, // 토큰 파라미터 추가 (에러 해결)
-        onLog: _addDlLog,
-        onProgress: (progress) {
-          if (mounted) setState(() {
-            _downloadProgress = progress * 0.7; 
-            _dlRemainingTime = "데이터 수신 중...";
-          });
-        },
-      );
-
-      await FileService.mergeAndDecryptFile(
-        sourceFolderPath: tempDownloadDir,
-        targetFilePath: outputFilePath,
-        token: _dlTokenController.text,
-        totalChunks: int.parse(_selectedFile!['count'].toString()),
-        onLog: _addDlLog,
-        onProgress: (progress) {
-          if (mounted) setState(() {
-            _downloadProgress = 0.7 + (progress * 0.3); 
-            _dlRemainingTime = "파일 복원 및 복호화 중...";
-          });
-        },
-      );
-
-      final tempDir = Directory(tempDownloadDir);
-      if (await tempDir.exists()) await tempDir.delete(recursive: true);
-
-      _addDlLog("성공: 파일 다운로드 및 복원이 완료되었습니다!");
-    } catch (e) {
-      _addDlLog("다운로드 실패: $e");
-    } finally {
-      if (mounted) setState(() => _isDownloading = false);
-    }
-  }
-
-  void _navigateToPage(int index) {
-    if (_currentPage == index || _isUploading || _isDownloading) return;
-    _pageController.animateToPage(index, duration: const Duration(milliseconds: 500), curve: Curves.easeInOutQuart);
-    setState(() => _currentPage = index);
+      final temp = '${Platform.environment['APPDATA']}\\DiscordCloud\\temp_dl';
+      _addLog(false, "다운로드 시작...");
+      await _ds.downloadChunks(storageChannelId: _s2.text, encryptedName: fileData['encrypted_name'], totalChunks: int.parse(fileData['count']), downloadPath: temp, token: _t2.text, onLog: (m) => _addLog(false, m), onProgress: (p) => setState(() { _prog2 = p * 0.7; _etr2 = "수신 중"; }));
+      await FileService.mergeAndDecryptFile(sourceFolderPath: temp, targetFilePath: out, token: _t2.text, totalChunks: int.parse(fileData['count']), onLog: (m) => _addLog(false, m), onProgress: (p) => setState(() { _prog2 = 0.7 + (p * 0.3); _etr2 = "복원 중"; }));
+      final d = Directory(temp); if (await d.exists()) await d.delete(recursive: true);
+      _addLog(false, "성공적으로 복원되었습니다.");
+    } catch (e) { _addLog(false, "실패: $e"); } finally { setState(() => _isDown = false); }
   }
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () => FocusScope.of(context).unfocus(),
-      child: Scaffold(
-        backgroundColor: const Color(0xFF1E1F22),
-        body: Center(
-          child: Container(
-            width: 800, height: 800, padding: const EdgeInsets.all(32),
-            decoration: BoxDecoration(color: const Color(0xFF2B2D31), borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 15, spreadRadius: 2)]),
-            child: Column(
-              children: [
-                Expanded(
-                  child: PageView(
-                    controller: _pageController,
-                    physics: const NeverScrollableScrollPhysics(),
-                    children: [_buildUploadPage(), _buildDownloadPage()],
-                  ),
-                ),
-                const SizedBox(height: 20),
-                _buildNavigationButtons(),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
+    return GestureDetector(onTap: () => FocusScope.of(context).unfocus(), child: Scaffold(backgroundColor: const Color(0xFF1E1F22), body: Center(child: Container(width: 800, height: 800, padding: const EdgeInsets.all(32), decoration: BoxDecoration(color: const Color(0xFF2B2D31), borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 15)]), child: Column(children: [Expanded(child: PageView(controller: _pageController, physics: const NeverScrollableScrollPhysics(), children: [_page(true), _page(false)])), const SizedBox(height: 20), _nav()])))));
   }
 
-  Widget _buildNavigationButtons() {
-    bool isWorking = _isUploading || _isDownloading;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        AnimatedOpacity(
-          duration: const Duration(milliseconds: 300),
-          opacity: (_currentPage == 1 && !isWorking) ? 1.0 : 0.0,
-          child: IconButton(icon: const Icon(Icons.arrow_back, color: Colors.white, size: 36), onPressed: (_currentPage == 1 && !isWorking) ? () => _navigateToPage(0) : null),
-        ),
-        const Text('@Zandura1212', style: TextStyle(color: Colors.grey, fontSize: 14, fontWeight: FontWeight.w300)),
-        AnimatedOpacity(
-          duration: const Duration(milliseconds: 300),
-          opacity: (_currentPage == 0 && !isWorking) ? 1.0 : 0.0,
-          child: IconButton(icon: const Icon(Icons.arrow_forward, color: Colors.white, size: 36), onPressed: (_currentPage == 0 && !isWorking) ? () => _navigateToPage(1) : null),
-        ),
-      ],
-    );
+  Widget _page(bool up) {
+    final bool same = (up ? _s1 : _s2).text.isNotEmpty && (up ? _s1 : _s2).text == (up ? _l1 : _l2).text;
+    final bool ready = (up ? _t1 : _t2).text.isNotEmpty && (up ? _s1 : _s2).text.isNotEmpty && (up ? _l1 : _l2).text.isNotEmpty && !same && (up ? _selectedFilePath != null : _selId != null) && !(up ? _isUp : _isDown);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(up ? 'Upload Bot Settings' : 'Download Bot Settings', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+      const SizedBox(height: 12),
+      _field(up ? _t1 : _t2, up ? _f1 : _f2, up ? _obs1 : _obs2, (v) => setState(() => up ? _obs1 = v : _obs2 = v)),
+      const SizedBox(height: 16),
+      _channels(up),
+      if (same) const Padding(padding: EdgeInsets.only(top: 8), child: Text('⚠️ 채널 ID는 서로 달라야 합니다.', style: TextStyle(color: Colors.redAccent, fontSize: 13))),
+      const SizedBox(height: 32),
+      Text(up ? 'File Upload' : 'File List', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+      const SizedBox(height: 12),
+      up ? _upPicker() : _dlPicker(ready),
+      const SizedBox(height: 32),
+      _btn(ready, up ? '업로드' : '다운로드', up ? _up : _down, up ? _isUp : _isDown),
+      const SizedBox(height: 40),
+      Text(up ? 'Logs' : 'Download Logs', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+      const SizedBox(height: 12),
+      _logBox(up ? _sc1 : _sc2, up ? _logs : _dlLogs),
+      if (up ? (_isUp || _prog1 > 0) : (_isDown || _prog2 > 0)) _progress(up ? _prog1 : _prog2, up ? _etr1 : _etr2),
+    ]);
   }
 
-  Widget _buildUploadPage() {
-    final bool isChannelsSame = _storageChannelController.text.isNotEmpty && 
-                               _listChannelController.text.isNotEmpty &&
-                               _storageChannelController.text == _listChannelController.text;
+  Widget _field(TextEditingController c, FocusNode f, bool obs, Function(bool) toggle) => TextField(controller: c, focusNode: f, obscureText: obs, decoration: InputDecoration(hintText: '봇 토큰 입력', border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), filled: true, fillColor: const Color(0xFF1E1F22), suffixIcon: IconButton(icon: Icon(obs ? Icons.visibility_off : Icons.visibility), onPressed: () => toggle(!obs))));
 
-    final bool isUploadEnabled = _tokenController.text.isNotEmpty && 
-                                 _storageChannelController.text.isNotEmpty &&
-                                 _listChannelController.text.isNotEmpty &&
-                                 !isChannelsSame &&
-                                 _selectedFilePath != null && !_isUploading;
+  Widget _channels(bool up) => Row(children: [
+    Expanded(child: TextField(controller: up ? _s1 : _s2, focusNode: up ? _fs1 : _fs2, decoration: InputDecoration(hintText: '저장 채널 ID', border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), filled: true, fillColor: const Color(0xFF1E1F22)))),
+    const SizedBox(width: 12),
+    Expanded(child: TextField(controller: up ? _l1 : _l2, focusNode: up ? _fl1 : _fl2, decoration: InputDecoration(hintText: '리스트 채널 ID', border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), filled: true, fillColor: const Color(0xFF1E1F22)))),
+    const SizedBox(width: 12),
+    ElevatedButton(onPressed: () { TokenService.save(up, (up ? _t1 : _t2).text, (up ? _s1 : _s2).text, (up ? _l1 : _l2).text); _addLog(up, "설정 저장 완료"); }, style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4E5058), padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))), child: const Text('저장'))
+  ]);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('Upload Bot Settings', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
-        const SizedBox(height: 12),
-        _buildTokenField(_tokenController, _tokenFocus, _isObscured, (val) => setState(() => _isObscured = val)),
-        const SizedBox(height: 16),
-        _buildChannelInputs(_storageChannelController, _storageFocus, _listChannelController, _listFocus, _handleSaveUploadConfig, isChannelsSame, _isUploading),
-        const SizedBox(height: 32),
-        const Text('File Upload', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
-        const SizedBox(height: 12),
-        _buildFilePicker(),
-        const SizedBox(height: 32),
-        _buildActionButton(isUploadEnabled, '업로드', _handleUpload, _isUploading),
-        const SizedBox(height: 40),
-        const Text('Logs', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)),
-        const SizedBox(height: 12),
-        _buildLogWindow(_logScrollController, _logs),
-        if (_isUploading || _uploadProgress > 0) _buildProgressBar(_uploadProgress, _remainingTime),
-      ],
-    );
-  }
+  Widget _upPicker() => MouseRegion(cursor: SystemMouseCursors.click, child: GestureDetector(onTap: _isUp ? null : () async { FilePickerResult? r = await FilePicker.platform.pickFiles(); if (r != null) setState(() { _selectedFilePath = r.files.single.path; _prog1 = 0.0; }); }, child: AnimatedContainer(duration: const Duration(milliseconds: 250), height: 64, padding: const EdgeInsets.symmetric(horizontal: 16), decoration: BoxDecoration(color: const Color(0xFF1E1F22), borderRadius: BorderRadius.circular(12), border: Border.all(color: _selectedFilePath != null ? const Color(0xFF5865F2) : Colors.grey.withOpacity(0.2))), child: Row(children: [Icon(Icons.insert_drive_file, color: _selectedFilePath != null ? const Color(0xFF5865F2) : Colors.grey), const SizedBox(width: 12), Expanded(child: Text(_selectedFilePath?.split(Platform.pathSeparator).last ?? '파일을 선택하세요', overflow: TextOverflow.ellipsis))]))));
 
-  Widget _buildDownloadPage() {
-    final bool isChannelsSame = _dlStorageChannelController.text.isNotEmpty && 
-                               _dlListChannelController.text.isNotEmpty &&
-                               _dlStorageChannelController.text == _dlListChannelController.text;
+  Widget _dlPicker(bool ready) => Row(children: [
+    Expanded(child: Container(height: 64, padding: const EdgeInsets.symmetric(horizontal: 16), decoration: BoxDecoration(color: const Color(0xFF1E1F22), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.withOpacity(0.2))), child: DropdownButtonHideUnderline(child: DropdownButton<String>(value: _selId, hint: const Text('파일 선택'), isExpanded: true, dropdownColor: const Color(0xFF1E1F22), items: _fileList.map((f) => DropdownMenuItem(value: f['encrypted_name'] as String, child: Text('${f['display_name']} (${f['count']} 조각)'))).toList(), onChanged: _isDown ? null : (v) => setState(() => _selId = v))))),
+    const SizedBox(width: 12),
+    ElevatedButton.icon(onPressed: (_isUp || _isDown) ? null : () async { await TokenService.save(false, _t2.text, _s2.text, _l2.text); await _ds.fetchFileList(listChannelId: _l2.text, token: _t2.text, onLog: (m) => _addLog(false, m)); await _loadFileList(); }, icon: const Icon(Icons.refresh), label: const Text('불러오기'), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4E5058), padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))))
+  ]);
 
-    final bool isConfigFilled = _dlTokenController.text.isNotEmpty && 
-                                _dlStorageChannelController.text.isNotEmpty &&
-                                _dlListChannelController.text.isNotEmpty &&
-                                !isChannelsSame;
+  Widget _btn(bool en, String label, VoidCallback on, bool work) => AnimatedOpacity(duration: const Duration(milliseconds: 200), opacity: en ? 1.0 : 0.5, child: SizedBox(width: double.infinity, height: 60, child: ElevatedButton(onPressed: en ? on : null, style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5865F2), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))), child: Text(work ? '처리 중...' : label, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)))));
 
-    final bool isDownloadEnabled = isConfigFilled && _selectedFile != null && !_isDownloading;
+  Widget _logBox(ScrollController sc, List<String> logs) => Expanded(child: Container(width: double.infinity, padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: const Color(0xFF1E1F22), borderRadius: BorderRadius.circular(12)), child: ListView.builder(controller: sc, itemCount: logs.length, itemBuilder: (c, i) => Text(logs[i], style: const TextStyle(color: Color(0xFF23A559), fontFamily: 'monospace', fontSize: 13)))));
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('Download Bot Settings', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
-        const SizedBox(height: 12),
-        _buildTokenField(_dlTokenController, _dlTokenFocus, _isDlObscured, (val) => setState(() => _isDlObscured = val)),
-        const SizedBox(height: 16),
-        _buildChannelInputs(_dlStorageChannelController, _dlStorageFocus, _dlListChannelController, _dlListFocus, _handleSaveDownloadConfig, isChannelsSame, _isDownloading),
-        const SizedBox(height: 32),
-        const Text('File List', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
-        const SizedBox(height: 12),
-        _buildFileListWithLoad(isConfigFilled),
-        const SizedBox(height: 32),
-        _buildActionButton(isDownloadEnabled, '다운로드', _handleDownload, _isDownloading),
-        const SizedBox(height: 40),
-        const Text('Download Logs', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)),
-        const SizedBox(height: 12),
-        _buildLogWindow(_dlLogScrollController, _dlLogs),
-        if (_isDownloading || _downloadProgress > 0) _buildProgressBar(_downloadProgress, _dlRemainingTime),
-      ],
-    );
-  }
+  Widget _progress(double p, String etr) => Column(children: [const SizedBox(height: 16), Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(etr, style: const TextStyle(color: Colors.white70, fontSize: 12)), Text('${(p * 100).toInt()}%', style: const TextStyle(color: Color(0xFF5865F2), fontSize: 12, fontWeight: FontWeight.bold))]), const SizedBox(height: 8), ClipRRect(borderRadius: BorderRadius.circular(8), child: LinearProgressIndicator(value: p, backgroundColor: const Color(0xFF1E1F22), minHeight: 8))]);
 
-  Widget _buildFilePicker() {
-    bool isWorking = _isUploading || _isDownloading;
-    return MouseRegion(
-      cursor: isWorking ? SystemMouseCursors.basic : SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: isWorking ? null : _handlePickFile,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 250), height: 64, padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(color: const Color(0xFF1E1F22), borderRadius: BorderRadius.circular(12), border: Border.all(color: _selectedFilePath != null ? const Color(0xFF5865F2) : Colors.grey.withOpacity(0.2), width: _selectedFilePath != null ? 2 : 1)),
-          child: Row(children: [Icon(_selectedFilePath != null ? Icons.check_circle : Icons.insert_drive_file, size: 20, color: _selectedFilePath != null ? const Color(0xFF5865F2) : Colors.grey), const SizedBox(width: 12), Expanded(child: Text(_selectedFilePath?.split(Platform.pathSeparator).last ?? '파일을 선택하세요', style: TextStyle(color: _selectedFilePath != null ? Colors.white : Colors.white54, fontSize: 14), overflow: TextOverflow.ellipsis))]),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFileListWithLoad(bool isEnabled) {
-    return Row(
-      children: [
-        Expanded(
-          child: Container(
-            height: 64,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1E1F22),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.grey.withOpacity(0.2)),
-            ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<Map<String, dynamic>>(
-                value: _selectedFile,
-                hint: const Text('파일을 선택하세요', style: TextStyle(color: Colors.white54, fontSize: 14)),
-                isExpanded: true,
-                dropdownColor: const Color(0xFF1E1F22),
-                icon: const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
-                items: _fileList.map((file) {
-                  final String name = file['display_name'] ?? file['name'] ?? 'Unknown File';
-                  return DropdownMenuItem<Map<String, dynamic>>(
-                    value: file,
-                    child: Text(
-                      '$name (${file['count']} chunks)',
-                      style: const TextStyle(color: Colors.white, fontSize: 14),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  );
-                }).toList(),
-                onChanged: (_isUploading || _isDownloading) ? null : (value) {
-                  setState(() {
-                    _selectedFile = value;
-                    _downloadProgress = 0.0;
-                  });
-                },
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        ElevatedButton.icon(
-          onPressed: (isEnabled && !_isUploading && !_isDownloading) ? _handleLoadDiscordList : null,
-          icon: const Icon(Icons.refresh),
-          label: const Text('불러오기'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF4E5058),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTokenField(TextEditingController controller, FocusNode node, bool obscured, Function(bool) onToggle) {
-    return TextField(
-      controller: controller,
-      focusNode: node,
-      enabled: !_isUploading && !_isDownloading,
-      obscureText: obscured,
-      enableInteractiveSelection: true,
-      decoration: InputDecoration(
-        hintText: '디스코드 봇 토큰을 입력하세요', 
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), 
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16), 
-        fillColor: const Color(0xFF1E1F22), 
-        filled: true,
-        suffixIcon: IconButton(
-          icon: Icon(obscured ? Icons.visibility_off : Icons.visibility, color: Colors.grey),
-          onPressed: () => onToggle(!obscured),
-        ),
-      )
-    );
-  }
-
-  Widget _buildChannelInputs(TextEditingController c1, FocusNode f1, TextEditingController c2, FocusNode f2, VoidCallback onSave, bool isSame, bool isWorking) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: c1, focusNode: f1, enabled: !isWorking,
-                enableInteractiveSelection: true,
-                decoration: InputDecoration(
-                  hintText: '저장 채널 ID',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                  fillColor: const Color(0xFF1E1F22), filled: true,
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextField(
-                controller: c2, focusNode: f2, enabled: !isWorking,
-                enableInteractiveSelection: true,
-                decoration: InputDecoration(
-                  hintText: '리스트 채널 ID',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                  fillColor: const Color(0xFF1E1F22), filled: true,
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            ElevatedButton(
-              onPressed: isWorking ? null : onSave,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF4E5058),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              child: const Text('저장'),
-            ),
-          ],
-        ),
-        if (isSame)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              '⚠️ 저장 채널과 리스트 채널 ID는 서로 달라야 합니다.',
-              style: TextStyle(color: Colors.redAccent.shade200, fontSize: 13, fontWeight: FontWeight.bold),
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildActionButton(bool enabled, String label, VoidCallback onPressed, bool isWorking) {
-    return AnimatedOpacity(
-      duration: const Duration(milliseconds: 200), opacity: enabled ? 1.0 : 0.5,
-      child: SizedBox(width: double.infinity, height: 60, child: ElevatedButton(onPressed: enabled ? onPressed : null, style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5865F2), foregroundColor: Colors.white, disabledBackgroundColor: const Color(0xFF5865F2).withOpacity(0.3), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))), child: Text(isWorking ? '처리 중...' : label, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)))),
-    );
-  }
-
-  Widget _buildLogWindow(ScrollController controller, List<String> logs) {
-    return Expanded(
-      child: Container(width: double.infinity, padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: const Color(0xFF1E1F22), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white.withOpacity(0.05))), child: ListView.builder(controller: controller, itemCount: logs.length, itemBuilder: (context, index) => Text(logs[index], style: const TextStyle(color: Color(0xFF23A559), fontFamily: 'monospace', fontSize: 13)))),
-    );
-  }
-
-  Widget _buildProgressBar(double progress, String remainingTime) {
-    return Column(
-      children: [
-        const SizedBox(height: 16),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text('작업 상태: $remainingTime', style: const TextStyle(color: Colors.white70, fontSize: 12)),
-            Text('${(progress * 100).toInt()}%', style: const TextStyle(color: Color(0xFF5865F2), fontSize: 12, fontWeight: FontWeight.bold)),
-          ],
-        ),
-        const SizedBox(height: 8),
-        ClipRRect(borderRadius: BorderRadius.circular(8), child: LinearProgressIndicator(value: progress, backgroundColor: const Color(0xFF1E1F22), valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF5865F2)), minHeight: 8)),
-      ],
-    );
-  }
+  Widget _nav() => Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+    IconButton(icon: Icon(Icons.arrow_back, color: (_curr == 1 && !_isUp && !_isDown) ? Colors.white : Colors.transparent), onPressed: () { if (_curr == 1) { _pageController.animateToPage(0, duration: const Duration(milliseconds: 500), curve: Curves.easeInOutQuart); setState(() => _curr = 0); } }),
+    const Text('@Zandura1212', style: TextStyle(color: Colors.grey, fontSize: 14)),
+    IconButton(icon: Icon(Icons.arrow_forward, color: (_curr == 0 && !_isUp && !_isDown) ? Colors.white : Colors.transparent), onPressed: () { if (_curr == 0) { _pageController.animateToPage(1, duration: const Duration(milliseconds: 500), curve: Curves.easeInOutQuart); setState(() => _curr = 1); } }),
+  ]);
 }
