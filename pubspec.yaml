@@ -17,6 +17,7 @@ dependencies:
   path_provider: 2.0.15
   encrypt: ^5.0.3
   crypto: ^3.0.3
+  nyxx: ^6.2.0 # 디스코드 봇 라이브러리 추가
 
 dev_dependencies:
   flutter_test:
