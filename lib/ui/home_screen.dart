@@ -109,7 +109,7 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
           for (var entity in entities) {
             if (entity is Directory) {
               await entity.delete(recursive: true);
-            } else if (entity is File && !entity.path.endsWith('config.json') && !entity.path.endsWith('list.json')) {
+            } else if (entity is File && !entity.path.endsWith('list.json')) {
               await entity.delete();
             }
           }
@@ -154,16 +154,17 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
                 final List<Map<String, dynamic>> rawList = List<Map<String, dynamic>>.from(decoded);
                 final Map<String, Map<String, dynamic>> uniqueMap = {};
                 for (var item in rawList) {
-                  // 암호화된 이름을 고유 키로 사용하여 중복 제거
                   uniqueMap[item['encrypted_name']] = item;
                 }
                 _fileList = uniqueMap.values.toList();
                 
-                // 에러 방지: 선택된 파일이 리스트에서 사라졌다면 null 처리
                 if (_selectedFile != null) {
-                  bool stillExists = _fileList.any((f) => 
-                    f['encrypted_name'] == _selectedFile!['encrypted_name']);
-                  if (!stillExists) _selectedFile = null;
+                  bool exists = _fileList.any((f) => f['encrypted_name'] == _selectedFile!['encrypted_name']);
+                  if (!exists) {
+                    _selectedFile = null;
+                  } else {
+                    _selectedFile = _fileList.firstWhere((f) => f['encrypted_name'] == _selectedFile!['encrypted_name']);
+                  }
                 }
               });
             }
@@ -177,22 +178,30 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
 
   void _addLog(String message) {
     final time = DateTime.now().toString().split('.').first.split(' ').last;
-    if (mounted) setState(() => _logs.add("[$time] $message"));
+    if (mounted) {
+      setState(() {
+        _logs.add("[$time] $message");
+        if (_logs.length > 500) _logs.removeAt(0);
+      });
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_logScrollController.hasClients) {
-        _logScrollController.animateTo(_logScrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 300), curve: Curves.easeOutCubic);
+        _logScrollController.jumpTo(_logScrollController.position.maxScrollExtent);
       }
     });
   }
 
   void _addDlLog(String message) {
     final time = DateTime.now().toString().split('.').first.split(' ').last;
-    if (mounted) setState(() => _dlLogs.add("[$time] $message"));
+    if (mounted) {
+      setState(() {
+        _dlLogs.add("[$time] $message");
+        if (_dlLogs.length > 500) _dlLogs.removeAt(0);
+      });
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_dlLogScrollController.hasClients) {
-        _dlLogScrollController.animateTo(_dlLogScrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 300), curve: Curves.easeOutCubic);
+        _dlLogScrollController.jumpTo(_dlLogScrollController.position.maxScrollExtent);
       }
     });
   }
@@ -217,10 +226,8 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
 
   Future<void> _handleLoadDiscordList() async {
     if (_isDownloading) return;
-    
     setState(() => _isDownloading = true);
     _addDlLog("디스코드에서 파일 리스트를 불러오는 중...");
-    
     try {
       await _discordService.fetchFileList(
         listChannelId: _dlListChannelController.text,
@@ -253,7 +260,6 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
 
   Future<void> _handleUpload() async {
     if (_selectedFilePath == null || _isUploading) return;
-    
     setState(() {
       _isUploading = true;
       _uploadProgress = 0.0;
@@ -263,30 +269,11 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
     try {
       String? appData = Platform.environment['APPDATA'];
       if (appData == null) throw Exception("APPDATA 경로를 찾을 수 없습니다.");
-      
       final customDirPath = '$appData\\DiscordCloud';
       final originalFileName = _selectedFilePath!.split(Platform.pathSeparator).last;
       final fileFolder = originalFileName.replaceAll('.', '_');
       final destinationFolderPath = '$customDirPath\\$fileFolder';
       final uploadTime = DateTime.now().toIso8601String();
-
-      final configFilePath = '$customDirPath\\config.json';
-      final configFile = File(configFilePath);
-      
-      List<dynamic> history = [{
-        'discord_token': _tokenController.text,
-        'storage_channel_id': _storageChannelController.text,
-        'list_channel_id': _listChannelController.text,
-        'folder_location': destinationFolderPath,
-        'original_file_name': originalFileName,
-        'upload_at': uploadTime,
-        'is_streaming': true,
-      }];
-
-      if (!await Directory(customDirPath).exists()) {
-        await Directory(customDirPath).create(recursive: true);
-      }
-      await configFile.writeAsString(jsonEncode(history));
 
       _addLog("로컬 파일 분할 및 암호화 시작...");
       await FileService.encryptAndSplitFile(
@@ -322,13 +309,11 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
         },
       );
       
-      _addLog("업로드 완료, 임시 폴더를 삭제합니다.");
       await _cleanUpFolders();
       await _loadFileList();
-      
       _addLog("모든 과정이 완료되었습니다.");
     } catch (e) {
-      _addLog("치명적 에러 발생: $e");
+      _addLog("에러 발생: $e");
     } finally {
       if (mounted) setState(() => _isUploading = false);
     }
@@ -337,17 +322,64 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
   Future<void> _handleDownload() async {
     if (_selectedFile == null || _isDownloading) return;
     
+    String? outputFilePath = await FilePicker.platform.saveFile(
+      dialogTitle: '파일 저장 위치를 선택하세요',
+      fileName: _selectedFile!['display_name'] ?? 'restored_file',
+    );
+
+    if (outputFilePath == null) return;
+
     setState(() {
       _isDownloading = true;
       _downloadProgress = 0.0;
       _dlRemainingTime = "준비 중...";
     });
 
-    _addDlLog("다운로드 시작: ${_selectedFile!['display_name'] ?? _selectedFile!['name']}");
-    await Future.delayed(const Duration(seconds: 2));
-    _addDlLog("다운로드 기능은 현재 개발 중입니다.");
-    
-    setState(() => _isDownloading = false);
+    try {
+      String? appData = Platform.environment['APPDATA'];
+      final String tempDownloadDir = '$appData\\DiscordCloud\\temp_dl';
+      
+      _addDlLog("다운로드 시작: ${_selectedFile!['display_name']}");
+      
+      await _discordService.login(_dlTokenController.text);
+      await _discordService.downloadChunks(
+        storageChannelId: _dlStorageChannelController.text,
+        encryptedName: _selectedFile!['encrypted_name'],
+        totalChunks: int.parse(_selectedFile!['count'].toString()),
+        downloadPath: tempDownloadDir,
+        token: _dlTokenController.text, // 토큰 파라미터 추가 (에러 해결)
+        onLog: _addDlLog,
+        onProgress: (progress) {
+          if (mounted) setState(() {
+            _downloadProgress = progress * 0.7; 
+            _dlRemainingTime = "데이터 수신 중...";
+          });
+        },
+      );
+
+      await FileService.mergeAndDecryptFile(
+        sourceFolderPath: tempDownloadDir,
+        targetFilePath: outputFilePath,
+        token: _dlTokenController.text,
+        totalChunks: int.parse(_selectedFile!['count'].toString()),
+        onLog: _addDlLog,
+        onProgress: (progress) {
+          if (mounted) setState(() {
+            _downloadProgress = 0.7 + (progress * 0.3); 
+            _dlRemainingTime = "파일 복원 및 복호화 중...";
+          });
+        },
+      );
+
+      final tempDir = Directory(tempDownloadDir);
+      if (await tempDir.exists()) await tempDir.delete(recursive: true);
+
+      _addDlLog("성공: 파일 다운로드 및 복원이 완료되었습니다!");
+    } catch (e) {
+      _addDlLog("다운로드 실패: $e");
+    } finally {
+      if (mounted) setState(() => _isDownloading = false);
+    }
   }
 
   void _navigateToPage(int index) {
@@ -471,6 +503,21 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
         _buildLogWindow(_dlLogScrollController, _dlLogs),
         if (_isDownloading || _downloadProgress > 0) _buildProgressBar(_downloadProgress, _dlRemainingTime),
       ],
+    );
+  }
+
+  Widget _buildFilePicker() {
+    bool isWorking = _isUploading || _isDownloading;
+    return MouseRegion(
+      cursor: isWorking ? SystemMouseCursors.basic : SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: isWorking ? null : _handlePickFile,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 250), height: 64, padding: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(color: const Color(0xFF1E1F22), borderRadius: BorderRadius.circular(12), border: Border.all(color: _selectedFilePath != null ? const Color(0xFF5865F2) : Colors.grey.withOpacity(0.2), width: _selectedFilePath != null ? 2 : 1)),
+          child: Row(children: [Icon(_selectedFilePath != null ? Icons.check_circle : Icons.insert_drive_file, size: 20, color: _selectedFilePath != null ? const Color(0xFF5865F2) : Colors.grey), const SizedBox(width: 12), Expanded(child: Text(_selectedFilePath?.split(Platform.pathSeparator).last ?? '파일을 선택하세요', style: TextStyle(color: _selectedFilePath != null ? Colors.white : Colors.white54, fontSize: 14), overflow: TextOverflow.ellipsis))]),
+        ),
+      ),
     );
   }
 
@@ -607,18 +654,10 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
     );
   }
 
-  Widget _buildFilePicker() {
-    bool isWorking = _isUploading || _isDownloading;
-    return MouseRegion(
-      cursor: isWorking ? SystemMouseCursors.basic : SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: isWorking ? null : _handlePickFile,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 250), height: 64, padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(color: const Color(0xFF1E1F22), borderRadius: BorderRadius.circular(12), border: Border.all(color: _selectedFilePath != null ? const Color(0xFF5865F2) : Colors.grey.withOpacity(0.2), width: _selectedFilePath != null ? 2 : 1)),
-          child: Row(children: [Icon(_selectedFilePath != null ? Icons.check_circle : Icons.insert_drive_file, size: 20, color: _selectedFilePath != null ? const Color(0xFF5865F2) : Colors.grey), const SizedBox(width: 12), Expanded(child: Text(_selectedFilePath?.split(Platform.pathSeparator).last ?? '파일을 선택하세요', style: TextStyle(color: _selectedFilePath != null ? Colors.white : Colors.white54, fontSize: 14), overflow: TextOverflow.ellipsis))]),
-        ),
-      ),
+  Widget _buildActionButton(bool enabled, String label, VoidCallback onPressed, bool isWorking) {
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 200), opacity: enabled ? 1.0 : 0.5,
+      child: SizedBox(width: double.infinity, height: 60, child: ElevatedButton(onPressed: enabled ? onPressed : null, style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5865F2), foregroundColor: Colors.white, disabledBackgroundColor: const Color(0xFF5865F2).withOpacity(0.3), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))), child: Text(isWorking ? '처리 중...' : label, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)))),
     );
   }
 
@@ -642,13 +681,6 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
         const SizedBox(height: 8),
         ClipRRect(borderRadius: BorderRadius.circular(8), child: LinearProgressIndicator(value: progress, backgroundColor: const Color(0xFF1E1F22), valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF5865F2)), minHeight: 8)),
       ],
-    );
-  }
-
-  Widget _buildActionButton(bool enabled, String label, VoidCallback onPressed, bool isWorking) {
-    return AnimatedOpacity(
-      duration: const Duration(milliseconds: 200), opacity: enabled ? 1.0 : 0.5,
-      child: SizedBox(width: double.infinity, height: 60, child: ElevatedButton(onPressed: enabled ? onPressed : null, style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5865F2), foregroundColor: Colors.white, disabledBackgroundColor: const Color(0xFF5865F2).withOpacity(0.3), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))), child: Text(isWorking ? '처리 중...' : label, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)))),
     );
   }
 }

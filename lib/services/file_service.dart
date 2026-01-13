@@ -12,6 +12,7 @@ class FileService {
     return "$twoDigitMinutes:$twoDigitSeconds";
   }
 
+  // 파일 업로드용 암호화/분할
   static Future<void> encryptAndSplitFile({
     required String sourceFilePath,
     required String destinationFolderPath,
@@ -25,8 +26,7 @@ class FileService {
     
     final keyBytes = sha256.convert(utf8.encode(token)).bytes;
     final key = encrypt.Key(Uint8List.fromList(keyBytes));
-    // 일관성을 위해 랜덤 IV 대신 고정 IV 사용
-    final iv = encrypt.IV(Uint8List(16));
+    final iv = encrypt.IV(Uint8List(16)); // 고정 IV
     final encrypter = encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.cbc));
 
     final dir = Directory(destinationFolderPath);
@@ -41,11 +41,10 @@ class FileService {
 
     try {
       while (bytesProcessed < totalFileSize) {
-        final Uint8List buffer = await raf.read(readChunkSize);
+        final buffer = await raf.read(readChunkSize);
         if (buffer.isEmpty) break;
 
         final compressed = zlib.encode(buffer);
-        // 고정 IV 적용
         final encrypted = encrypter.encryptBytes(compressed, iv: iv);
         
         final chunkFile = File('$destinationFolderPath\\$chunkIdx.txt');
@@ -72,5 +71,55 @@ class FileService {
     
     stopwatch.stop();
     onLog("로컬 분할 및 암호화 완료.");
+  }
+
+  // 다운로드한 조각들을 원본 파일로 복원하는 함수
+  static Future<void> mergeAndDecryptFile({
+    required String sourceFolderPath,
+    required String targetFilePath,
+    required String token,
+    required int totalChunks,
+    required Function(double progress) onProgress,
+    required Function(String log) onLog,
+  }) async {
+    final outputFile = File(targetFilePath);
+    final outputSink = outputFile.openWrite();
+    
+    final keyBytes = sha256.convert(utf8.encode(token)).bytes;
+    final key = encrypt.Key(Uint8List.fromList(keyBytes));
+    final encrypter = encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.cbc));
+
+    onLog("파일 복원 및 복호화 시작...");
+
+    try {
+      for (int i = 0; i < totalChunks; i++) {
+        final chunkFile = File('$sourceFolderPath\\$i.txt');
+        if (!await chunkFile.exists()) throw Exception("조각 #$i 파일을 찾을 수 없습니다.");
+
+        final String content = await chunkFile.readAsString();
+        final parts = content.split(':');
+        if (parts.length != 2) throw Exception("조각 #$i 형식이 잘못되었습니다.");
+
+        final iv = encrypt.IV.fromBase64(parts[0]);
+        final encryptedData = encrypt.Encrypted.fromBase64(parts[1]);
+
+        // 복호화
+        final decryptedBytes = encrypter.decryptBytes(encryptedData, iv: iv);
+        
+        // 압축 해제
+        final decompressedBytes = zlib.decode(decryptedBytes);
+        
+        // 원본 파일에 쓰기
+        outputSink.add(decompressedBytes);
+        
+        onProgress((i + 1) / totalChunks);
+        if (i % 5 == 0) onLog("복원 중: $i / $totalChunks 조각 완료");
+        await Future.delayed(Duration.zero);
+      }
+    } finally {
+      await outputSink.close();
+    }
+    
+    onLog("성공: 원본 파일 복원 완료 ($targetFilePath)");
   }
 }
