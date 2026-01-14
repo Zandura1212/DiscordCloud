@@ -51,9 +51,17 @@ class DiscordService {
         lastId = messages.last.id;
         if (messages.length < 100) more = false;
       }
+      
       final String? path = Platform.environment['APPDATA'];
-      if (path != null) await File('$path\\DiscordCloud\\list.json').writeAsString(jsonEncode(list));
-      onLog("동기화 완료 (${list.length}개)");
+      if (path != null) {
+        final dir = Directory('$path\\DiscordCloud');
+        // 폴더가 없으면 생성
+        if (!await dir.exists()) {
+          await dir.create(recursive: true);
+        }
+        await File('${dir.path}\\list.json').writeAsString(jsonEncode(list));
+        onLog("동기화 완료 (${list.length}개)");
+      }
     } catch (e) { onLog("실패: $e"); } finally { await logout(); }
   }
 
@@ -109,9 +117,12 @@ class DiscordService {
         onProgress((i + group.length) / files.length);
       }
       await lChan.sendMessage(MessageBuilder(content: "${encName}_${files.length}"));
+      
       final String? path = Platform.environment['APPDATA'];
       if (path != null) {
-        final file = File('$path\\DiscordCloud\\list.json');
+        final dir = Directory('$path\\DiscordCloud');
+        if (!await dir.exists()) await dir.create(recursive: true);
+        final file = File('${dir.path}\\list.json');
         List history = [];
         if (await file.exists()) history = jsonDecode(await file.readAsString());
         history.add({"display_name": originalFileName, "encrypted_name": encName, "count": files.length.toString(), "time": uploadTime});
